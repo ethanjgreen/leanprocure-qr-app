@@ -138,10 +138,21 @@ export default function Page() {
   const [adminPassword, setAdminPassword] = useState("");
   const ADMIN_PASSWORD = "leanprocure123";
 
-  const [batchInput, setBatchInput] = useState(batchExample);
-  const [batchRows, setBatchRows] = useState([]);
-  const [batchMessage, setBatchMessage] = useState("");
-  const [batchLoading, setBatchLoading] = useState(false);
+const [batchEntries, setBatchEntries] = useState([
+  {
+    id: 1,
+    fileName: "qr-1",
+    qrType: "text",
+    text: "",
+    to: "",
+    cc: "",
+    bcc: "",
+    subject: "",
+    body: "",
+  },
+]);
+const [batchMessage, setBatchMessage] = useState("");
+const [batchLoading, setBatchLoading] = useState(false);
 
   const [kanbanTitle, setKanbanTitle] = useState("EXTERNAL KANBAN");
   const [kanbanCode, setKanbanCode] = useState("K-033");
@@ -167,7 +178,29 @@ export default function Page() {
       })
     : text.trim();
 
-  const validBatchRows = useMemo(() => batchRows.filter((row) => getBatchQrValue(row).trim()), [batchRows]);
+const validBatchRows = useMemo(
+  () =>
+    batchEntries
+      .map((entry) =>
+        entry.qrType === "text"
+          ? {
+              id: entry.id,
+              fileName: entry.fileName,
+              text: entry.text,
+            }
+          : {
+              id: entry.id,
+              fileName: entry.fileName,
+              to: entry.to,
+              cc: entry.cc,
+              bcc: entry.bcc,
+              subject: entry.subject,
+              body: entry.body,
+            }
+      )
+      .filter((row) => getBatchQrValue(row).trim()),
+  [batchEntries]
+);
 
   useEffect(() => {
     const generate = async () => {
@@ -229,11 +262,39 @@ export default function Page() {
     }
   };
 
-  const handleBatchParse = () => {
-    const rows = parseCsv(batchInput);
-    setBatchRows(rows);
-    setBatchMessage(rows.length ? `${rows.length} rows ready for export.` : "No valid rows found.");
-  };
+const addBatchEntry = () => {
+  setBatchEntries((prev) => {
+    if (prev.length >= 5) return prev;
+    return [
+      ...prev,
+      {
+        id: Date.now(),
+        fileName: `qr-${prev.length + 1}`,
+        qrType: "text",
+        text: "",
+        to: "",
+        cc: "",
+        bcc: "",
+        subject: "",
+        body: "",
+      },
+    ];
+  });
+};
+
+const updateBatchEntry = (id, field, value) => {
+  setBatchEntries((prev) =>
+    prev.map((entry) => (entry.id === id ? { ...entry, [field]: value } : entry))
+  );
+};
+
+const removeBatchEntry = (id) => {
+  setBatchEntries((prev) => (prev.length === 1 ? prev : prev.filter((entry) => entry.id !== id)));
+};
+
+const handleBatchParse = () => {
+  setBatchMessage(validBatchRows.length ? `${validBatchRows.length} QR codes ready.` : "No valid rows found.");
+};
 
   const downloadPng = () => {
     if (!canvasRef.current) return;
@@ -712,38 +773,168 @@ export default function Page() {
                   <button onClick={clearAll} style={ghostButtonStyle}>Reset</button>
                 </div>
               </>
-            ) : creatorMode === "batch" ? (
-              <section>
-                <div style={sectionHeaderStyle(primaryColor)}>Create multiple different QR codes</div>
-                <p style={{ color: "#64748b", fontSize: 14, marginTop: 0 }}>
-                  Paste CSV rows for different QR codes. Use either text or email fields. Then export all QR codes as a ZIP of PNG files.
-                </p>
-                <label style={labelStyle}>CSV format</label>
-                <textarea value={batchInput} onChange={(e) => setBatchInput(e.target.value)} style={{ ...inputStyle, minHeight: 220, resize: "vertical", fontFamily: "monospace" }} />
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
-                  <button onClick={handleBatchParse} style={actionButtonStyle(primaryColor)}>Prepare QR list</button>
-                  <button onClick={downloadBatchZip} style={actionButtonStyle(primaryColor)} disabled={batchLoading}>
-                    {batchLoading ? "Building ZIP..." : "Download all QR codes"}
-                  </button>
+) : creatorMode === "batch" ? (
+  <section>
+    <div style={sectionHeaderStyle(primaryColor)}>Create multiple different QR codes</div>
+    <p style={{ color: "#64748b", fontSize: 14, marginTop: 0 }}>
+      Build up to 5 different QR codes. Choose Text / URL or Email QR for each line.
+    </p>
+
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+      <div style={{ fontWeight: 700, color: primaryColor }}>Multiple QR builder</div>
+      <button
+        onClick={addBatchEntry}
+        disabled={batchEntries.length >= 5}
+        style={outlineButtonStyle(primaryColor)}
+      >
+        Add line
+      </button>
+    </div>
+
+    <div style={{ display: "grid", gap: 12, marginBottom: 16 }}>
+      {batchEntries.map((entry, index) => (
+        <div
+          key={entry.id}
+          style={{
+            border: `1px solid ${primaryColor}22`,
+            borderRadius: 16,
+            padding: 14,
+            background: "#f8fbff",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <div style={{ fontWeight: 700, color: primaryColor }}>QR line {index + 1}</div>
+            {batchEntries.length > 1 ? (
+              <button onClick={() => removeBatchEntry(entry.id)} style={ghostButtonStyle}>
+                Remove
+              </button>
+            ) : null}
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div>
+              <label style={labelStyle}>File name</label>
+              <input
+                value={entry.fileName}
+                onChange={(e) => updateBatchEntry(entry.id, "fileName", e.target.value)}
+                style={inputStyle}
+                placeholder={`qr-${index + 1}`}
+              />
+            </div>
+
+            <div>
+              <label style={labelStyle}>QR type</label>
+              <select
+                value={entry.qrType}
+                onChange={(e) => updateBatchEntry(entry.id, "qrType", e.target.value)}
+                style={{ ...inputStyle, background: "white" }}
+              >
+                <option value="text">Text / URL</option>
+                <option value="email">Email QR</option>
+              </select>
+            </div>
+          </div>
+
+          {entry.qrType === "text" ? (
+            <>
+              <label style={labelStyle}>Text or URL</label>
+              <textarea
+                value={entry.text}
+                onChange={(e) => updateBatchEntry(entry.id, "text", e.target.value)}
+                style={{ ...inputStyle, minHeight: 90, resize: "vertical" }}
+                placeholder="https://example.com/item/170377"
+              />
+            </>
+          ) : (
+            <>
+              <label style={labelStyle}>To</label>
+              <input
+                value={entry.to}
+                onChange={(e) => updateBatchEntry(entry.id, "to", e.target.value)}
+                style={inputStyle}
+                placeholder="orders@supplier.com"
+              />
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div>
+                  <label style={labelStyle}>CC</label>
+                  <input
+                    value={entry.cc}
+                    onChange={(e) => updateBatchEntry(entry.id, "cc", e.target.value)}
+                    style={inputStyle}
+                    placeholder="optional"
+                  />
                 </div>
-                <div style={{ color: batchMessage.includes("failed") ? "#b91c1c" : "#475569", fontSize: 14, marginBottom: 16 }}>{batchMessage}</div>
-                <div style={{ background: "#f8fbff", border: `1px solid ${primaryColor}22`, borderRadius: 18, padding: 16 }}>
-                  <div style={{ fontWeight: 800, color: primaryColor, marginBottom: 10 }}>Prepared rows</div>
-                  {validBatchRows.length ? (
-                    <div style={{ display: "grid", gap: 10 }}>
-                      {validBatchRows.map((row, index) => (
-                        <div key={row.id} style={{ border: "1px solid #e2e8f0", borderRadius: 14, padding: 12, background: "white" }}>
-                          <div style={{ fontWeight: 700, color: "#0f172a" }}>{row.fileName || `qr-${index + 1}`}</div>
-                          <div style={{ fontSize: 13, color: "#64748b", wordBreak: "break-all", marginTop: 6 }}>{getBatchQrValue(row)}</div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div style={{ color: "#64748b", fontSize: 14 }}>No multiple QR rows prepared yet.</div>
-                  )}
+                <div>
+                  <label style={labelStyle}>BCC</label>
+                  <input
+                    value={entry.bcc}
+                    onChange={(e) => updateBatchEntry(entry.id, "bcc", e.target.value)}
+                    style={inputStyle}
+                    placeholder="optional"
+                  />
                 </div>
-              </section>
-            ) : (
+              </div>
+
+              <label style={labelStyle}>Subject</label>
+              <input
+                value={entry.subject}
+                onChange={(e) => updateBatchEntry(entry.id, "subject", e.target.value)}
+                style={inputStyle}
+                placeholder="Reorder 170377"
+              />
+
+              <label style={labelStyle}>Body</label>
+              <textarea
+                value={entry.body}
+                onChange={(e) => updateBatchEntry(entry.id, "body", e.target.value)}
+                style={{ ...inputStyle, minHeight: 90, resize: "vertical" }}
+                placeholder="Hi, please supply 45 pcs..."
+              />
+            </>
+          )}
+        </div>
+      ))}
+    </div>
+
+    <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
+      <button onClick={handleBatchParse} style={actionButtonStyle(primaryColor)}>
+        Prepare QR list
+      </button>
+      <button onClick={downloadBatchZip} style={actionButtonStyle(primaryColor)} disabled={batchLoading}>
+        {batchLoading ? "Building ZIP..." : "Download all QR codes"}
+      </button>
+    </div>
+
+    <div
+      style={{
+        color: batchMessage.includes("failed") ? "#b91c1c" : "#475569",
+        fontSize: 14,
+        marginBottom: 16,
+      }}
+    >
+      {batchMessage}
+    </div>
+
+    <div style={{ background: "#f8fbff", border: `1px solid ${primaryColor}22`, borderRadius: 18, padding: 16 }}>
+      <div style={{ fontWeight: 800, color: primaryColor, marginBottom: 10 }}>Prepared rows</div>
+      {validBatchRows.length ? (
+        <div style={{ display: "grid", gap: 10 }}>
+          {validBatchRows.map((row, index) => (
+            <div key={row.id} style={{ border: "1px solid #e2e8f0", borderRadius: 14, padding: 12, background: "white" }}>
+              <div style={{ fontWeight: 700, color: "#0f172a" }}>{row.fileName || `qr-${index + 1}`}</div>
+              <div style={{ fontSize: 13, color: "#64748b", wordBreak: "break-all", marginTop: 6 }}>
+                {getBatchQrValue(row)}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div style={{ color: "#64748b", fontSize: 14 }}>No multiple QR rows prepared yet.</div>
+      )}
+    </div>
+  </section>
+) : (
               <section>
                 <div style={sectionHeaderStyle(primaryColor)}>Kanban card generator</div>
                 <p style={{ color: "#64748b", fontSize: 14, marginTop: 0 }}>
