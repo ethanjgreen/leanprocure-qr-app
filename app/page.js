@@ -729,51 +729,68 @@ export default function Page() {
         <div style={{ display: "grid", gridTemplateColumns: "minmax(360px, 1.15fr) minmax(320px, 0.85fr)", gap: 24 }}>
           <div style={cardStyle}>
             {isAdmin && (
-              <section style={{ marginBottom: 24 }}>
-                <div style={sectionHeaderStyle(primaryColor)}>Licensing and watermark</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 12, alignItems: "end" }}>
-                  <div>
-                    <label style={labelStyle}>Client license key</label>
-                    <input value={licenseKey} onChange={(e) => setLicenseKey(e.target.value)} placeholder="Enter license key to remove watermark" style={inputStyle} />
+              <>
+                <section style={{ marginBottom: 24 }}>
+                  <div style={sectionHeaderStyle(primaryColor)}>Licensing and watermark</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 12, alignItems: "end" }}>
+                    <div>
+                      <label style={labelStyle}>Client license key</label>
+                      <input
+                        type={showLicenseKey ? "text" : "password"}
+                        value={licenseKey}
+                        onChange={(e) => setLicenseKey(e.target.value)}
+                        placeholder="Enter license key to remove watermark"
+                        style={inputStyle}
+                      />
+                    </div>
+                    <button onClick={() => setShowLicenseKey((prev) => !prev)} style={ghostButtonStyle}>
+                      {showLicenseKey ? "Hide" : "Show"}
+                    </button>
+                    <button onClick={applyLicenseKey} style={actionButtonStyle(primaryColor)}>Apply key</button>
                   </div>
-                  <button onClick={applyLicenseKey} style={actionButtonStyle(primaryColor)}>Apply key</button>
-                </div>
-                <div style={{ marginTop: -4, marginBottom: 16, fontSize: 13, color: watermarkEnabled ? "#92400e" : "#166534" }}>{licenseStatus}</div>
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
-                  <button onClick={() => { setWatermarkEnabled(true); setLicenseStatus("Watermark ON"); }} style={outlineButtonStyle(primaryColor)}>Force watermark ON</button>
-                  <button onClick={() => { setWatermarkEnabled(false); setLicenseStatus("Watermark OFF (admin override)"); }} style={outlineButtonStyle(primaryColor)}>Admin watermark OFF</button>
-                </div>
-              </section>
+                  <div style={{ marginTop: -4, marginBottom: 16, fontSize: 13, color: watermarkEnabled ? "#92400e" : "#166534" }}>
+                    {licenseStatus}
+                  </div>
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    <button onClick={() => { setWatermarkEnabled(true); setLicenseStatus("Watermark ON"); }} style={outlineButtonStyle(primaryColor)}>
+                      Force watermark ON
+                    </button>
+                    <button onClick={() => { setWatermarkEnabled(false); setLicenseStatus("Watermark OFF (admin override)"); }} style={outlineButtonStyle(primaryColor)}>
+                      Admin watermark OFF
+                    </button>
+                  </div>
+                </section>
 
-              <section style={{ marginBottom: 24 }}>
-                <div style={sectionHeaderStyle(primaryColor)}>LeanProcure branding</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-                  <div>
-                    <label style={labelStyle}>Brand name</label>
-                    <input value={brandName} onChange={(e) => setBrandName(e.target.value)} style={inputStyle} />
+                <section style={{ marginBottom: 24 }}>
+                  <div style={sectionHeaderStyle(primaryColor)}>LeanProcure branding</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+                    <div>
+                      <label style={labelStyle}>Brand name</label>
+                      <input value={brandName} onChange={(e) => setBrandName(e.target.value)} style={inputStyle} />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Tagline</label>
+                      <input value={brandTagline} onChange={(e) => setBrandTagline(e.target.value)} style={inputStyle} />
+                    </div>
                   </div>
-                  <div>
-                    <label style={labelStyle}>Tagline</label>
-                    <input value={brandTagline} onChange={(e) => setBrandTagline(e.target.value)} style={inputStyle} />
+                  <label style={labelStyle}>Brand subline</label>
+                  <input value={brandSubline} onChange={(e) => setBrandSubline(e.target.value)} style={inputStyle} />
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
+                    <div>
+                      <label style={labelStyle}>Primary colour</label>
+                      <input type="color" value={primaryColor} onChange={(e) => setPrimaryColor(e.target.value)} style={{ ...inputStyle, height: 48, padding: 6 }} />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Secondary colour</label>
+                      <input type="color" value={secondaryColor} onChange={(e) => setSecondaryColor(e.target.value)} style={{ ...inputStyle, height: 48, padding: 6 }} />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Upload logo</label>
+                      <input type="file" accept="image/*" onChange={handleLogoUpload} style={{ ...inputStyle, padding: 10 }} />
+                    </div>
                   </div>
-                </div>
-                <label style={labelStyle}>Brand subline</label>
-                <input value={brandSubline} onChange={(e) => setBrandSubline(e.target.value)} style={inputStyle} />
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
-                  <div>
-                    <label style={labelStyle}>Primary colour</label>
-                    <input type="color" value={primaryColor} onChange={(e) => setPrimaryColor(e.target.value)} style={{ ...inputStyle, height: 48, padding: 6 }} />
-                  </div>
-                  <div>
-                    <label style={labelStyle}>Secondary colour</label>
-                    <input type="color" value={secondaryColor} onChange={(e) => setSecondaryColor(e.target.value)} style={{ ...inputStyle, height: 48, padding: 6 }} />
-                  </div>
-                  <div>
-                    <label style={labelStyle}>Upload logo</label>
-                    <input type="file" accept="image/*" onChange={handleLogoUpload} style={{ ...inputStyle, padding: 10 }} />
-                  </div>
-                </div>
-              </section>
+                </section>
+              </>
             )}
 
             {creatorMode === "single" ? (
