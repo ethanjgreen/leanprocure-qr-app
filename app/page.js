@@ -31,10 +31,19 @@ const templates = {
   },
 };
 
-const batchExample = `fileName,to,cc,bcc,subject,body,text
-artronics-170377,orders@vendor.com,,buyer@company.com,Reorder 170377,"Hi,\nPlease supply 45 pcs of part 170377.\nThanks",
-stock-alert,,,,Stock Alert,"Bin empty for part BG0273-JP",
-plain-url,,,,,,https://example.com/item/170377`;
+function createBatchEntry(id) {
+  return {
+    id,
+    fileName: `qr-${id}`,
+    qrType: "text",
+    text: "",
+    to: "",
+    cc: "",
+    bcc: "",
+    subject: "",
+    body: "",
+  };
+}
 
 function buildMailto({ to = "", cc = "", bcc = "", subject = "", body = "" }) {
   const params = new URLSearchParams();
@@ -112,6 +121,45 @@ function getBatchQrValue(row) {
   });
 }
 
+function loadImage(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+
+async function drawQrBrandOverlay(canvas, logoSrc) {
+  if (!canvas || !logoSrc) return;
+
+  const ctx = canvas.getContext("2d");
+  const img = await loadImage(logoSrc);
+  const size = Math.max(40, Math.floor(Math.min(canvas.width, canvas.height) * 0.18));
+  const x = (canvas.width - size) / 2;
+  const y = (canvas.height - size) / 2;
+  const pad = Math.floor(size * 0.14);
+  const radius = Math.floor(size * 0.18);
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y - pad);
+  ctx.lineTo(x + size - radius, y - pad);
+  ctx.quadraticCurveTo(x + size + pad, y - pad, x + size + pad, y - pad + radius);
+  ctx.lineTo(x + size + pad, y + size + pad - radius);
+  ctx.quadraticCurveTo(x + size + pad, y + size + pad, x + size - radius, y + size + pad);
+  ctx.lineTo(x + radius, y + size + pad);
+  ctx.quadraticCurveTo(x - pad, y + size + pad, x - pad, y + size + pad - radius);
+  ctx.lineTo(x - pad, y - pad + radius);
+  ctx.quadraticCurveTo(x - pad, y - pad, x + radius, y - pad);
+  ctx.closePath();
+  ctx.fillStyle = "rgba(255,255,255,0.96)";
+  ctx.fill();
+  ctx.restore();
+
+  ctx.drawImage(img, x, y, size, size);
+}
+
 export default function Page() {
   const [mode, setMode] = useState("email");
   const [creatorMode, setCreatorMode] = useState("single");
@@ -133,13 +181,23 @@ export default function Page() {
   const [primaryColor, setPrimaryColor] = useState("#0f2a4f");
   const [secondaryColor, setSecondaryColor] = useState("#5c9b4a");
   const [logoDataUrl, setLogoDataUrl] = useState("");
+  const [watermarkEnabled, setWatermarkEnabled] = useState(true);
+  const [licenseKey, setLicenseKey] = useState("");
+  const [licenseStatus, setLicenseStatus] = useState("Watermark ON");
+  const [showLicenseKey, setShowLicenseKey] = useState(false);
+  const VALID_LICENSE_KEYS = ["LP-PRO-91827", "LP-CLIENT-44219", "LP-UNLOCK-77031"];
+
+  const [usageStats, setUsageStats] = useState({
+    singleQrDownloads: 0,
+    batchExports: 0,
+    kanbanPrints: 0,
+    watermarkFreeExports: 0,
+  });
 
   const [isAdmin, setIsAdmin] = useState(false);
   const [adminPassword, setAdminPassword] = useState("");
-  const ADMIN_PASSWORD = "leanprocure123";
-
-  const [batchInput, setBatchInput] = useState(batchExample);
-  const [batchRows, setBatchRows] = useState([]);
+  const [showAdminPassword, setShowAdminPassword] = useState(false);
+  const [batchEntries, setBatchEntries] = useState([createBatchEntry(1)]);
   const [batchMessage, setBatchMessage] = useState("");
   const [batchLoading, setBatchLoading] = useState(false);
 
@@ -167,7 +225,25 @@ export default function Page() {
       })
     : text.trim();
 
-  const validBatchRows = useMemo(() => batchRows.filter((row) => getBatchQrValue(row).trim()), [batchRows]);
+  const validBatchRows = useMemo(
+    () =>
+      batchEntries
+        .map((entry) =>
+          entry.qrType === "text"
+            ? { id: entry.id, fileName: entry.fileName, text: entry.text }
+            : {
+                id: entry.id,
+                fileName: entry.fileName,
+                to: entry.to,
+                cc: entry.cc,
+                bcc: entry.bcc,
+                subject: entry.subject,
+                body: entry.body,
+              }
+        )
+        .filter((row) => getBatchQrValue(row).trim()),
+    [batchEntries]
+  );
 
   useEffect(() => {
     const generate = async () => {
@@ -182,13 +258,17 @@ export default function Page() {
             light: "#FFFFFF",
           },
         });
+
+        if (logoDataUrl && watermarkEnabled) {
+          await drawQrBrandOverlay(canvasRef.current, logoDataUrl);
+        }
       } catch (error) {
         console.error("Failed to generate QR code:", error);
       }
     };
 
     generate();
-  }, [qrValue, size, margin, primaryColor]);
+  }, [qrValue, size, margin, primaryColor, logoDataUrl, watermarkEnabled]);
 
   const applyTemplate = (templateKey) => {
     const template = templates[templateKey];
@@ -229,14 +309,46 @@ export default function Page() {
     }
   };
 
-  const handleBatchParse = () => {
-    const rows = parseCsv(batchInput);
-    setBatchRows(rows);
-    setBatchMessage(rows.length ? `${rows.length} rows ready for export.` : "No valid rows found.");
+  const applyLicenseKey = () => {
+    const cleaned = licenseKey.trim().toUpperCase();
+    if (VALID_LICENSE_KEYS.includes(cleaned)) {
+      setWatermarkEnabled(false);
+      setLicenseStatus("Licensed mode active - watermark OFF");
+    } else {
+      setWatermarkEnabled(true);
+      setLicenseStatus("Invalid license key - watermark ON");
+      alert("Invalid license key");
+    }
   };
 
-  const downloadPng = () => {
+  const addBatchEntry = () => {
+    setBatchEntries((prev) => {
+      if (prev.length >= 5) return prev;
+      return [...prev, createBatchEntry(prev.length + 1)];
+    });
+  };
+
+  const updateBatchEntry = (id, field, value) => {
+    setBatchEntries((prev) =>
+      prev.map((entry) => (entry.id === id ? { ...entry, [field]: value } : entry))
+    );
+  };
+
+  const removeBatchEntry = (id) => {
+    setBatchEntries((prev) => (prev.length === 1 ? prev : prev.filter((entry) => entry.id !== id)));
+  };
+
+  const prepareBatchList = () => {
+    setBatchMessage(validBatchRows.length ? `${validBatchRows.length} QR codes ready.` : "Add at least one valid QR entry.");
+  };
+
+  const downloadPng = async () => {
     if (!canvasRef.current) return;
+
+    if (logoDataUrl && watermarkEnabled) {
+      await drawQrBrandOverlay(canvasRef.current, logoDataUrl);
+    }
+
     const url = canvasRef.current.toDataURL("image/png");
     const link = document.createElement("a");
     link.href = url;
@@ -343,6 +455,10 @@ export default function Page() {
             body { font-family: Arial, sans-serif; padding: 24px; background: #f4f4f4; }
             .card { width: 720px; margin: 0 auto; background: white; border: 2px solid #3b3b3b; }
             .header { display:flex; justify-content:space-between; align-items:center; background:#b64c4c; color:white; padding:10px 14px; font-weight:700; font-size:34px; }
+            .brand-stamp { display:flex; align-items:center; gap:10px; padding:12px 14px; border-bottom:1px solid #555; }
+            .brand-stamp img { width:44px; height:44px; object-fit:contain; border-radius:10px; }
+            .brand-badge { width:44px; height:44px; border-radius:10px; background:linear-gradient(135deg, ${primaryColor}, ${secondaryColor}); color:white; display:flex; align-items:center; justify-content:center; font-weight:800; }
+            .brand-copy { font-size:12px; color:#444; line-height:1.35; }
             .code { font-size:30px; }
             .body { display:grid; grid-template-columns: 1fr 1fr; }
             .qrbox { border-right:1px solid #555; border-bottom:1px solid #555; padding:12px; min-height:340px; display:flex; align-items:center; justify-content:center; }
@@ -364,6 +480,10 @@ export default function Page() {
             <div class="header">
               <div>${kanbanTitle.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>
               <div class="code">${kanbanCode.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>
+            </div>
+            <div class="brand-stamp">
+              ${logoDataUrl ? `<img src="${logoDataUrl}" alt="Logo" />` : `<div class="brand-badge">LP</div>`}
+              <div class="brand-copy"><strong>${brandName.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</strong><br />${watermarkEnabled ? `© ${brandName.replace(/</g, "&lt;").replace(/>/g, "&gt;")} - generated card` : `Licensed client build`}</div>
             </div>
             <div class="body">
               <div class="qrbox">
@@ -391,7 +511,7 @@ export default function Page() {
               <div></div>
             </div>
             <div class="footer-head">RESTOCKING INFORMATION</div>
-            <div class="footer-body">${kanbanRestockInfo.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>
+            <div class="footer-body">${kanbanRestockInfo.replace(/</g, "&lt;").replace(/>/g, "&gt;")}${watermarkEnabled ? `<br /><br /><span style="font-size:12px;color:#666;">© ${brandName.replace(/</g, "&lt;").replace(/>/g, "&gt;")} - not for unauthorised reuse</span>` : ``}</div>
           </div>
           <script>window.onload = function () { window.print(); };</script>
         </body>
@@ -435,7 +555,8 @@ export default function Page() {
       for (let i = 0; i < validBatchRows.length; i += 1) {
         const row = validBatchRows[i];
         const value = getBatchQrValue(row);
-        const dataUrl = await QRCode.toDataURL(value, {
+        const tempCanvas = document.createElement("canvas");
+        await QRCode.toCanvas(tempCanvas, value, {
           width: Number(size),
           margin: Number(margin),
           color: {
@@ -444,6 +565,11 @@ export default function Page() {
           },
         });
 
+        if (logoDataUrl && watermarkEnabled) {
+          await drawQrBrandOverlay(tempCanvas, logoDataUrl);
+        }
+
+        const dataUrl = tempCanvas.toDataURL("image/png");
         const binary = atob(dataUrl.split(",")[1]);
         const fileBytes = new Uint8Array(binary.length);
         for (let j = 0; j < binary.length; j += 1) {
@@ -568,6 +694,7 @@ export default function Page() {
               )}
               <div>
                 <div style={{ fontSize: 36, fontWeight: 800, color: primaryColor, lineHeight: 1 }}>{brandName}</div>
+                <div style={{ marginTop: 2, fontSize: 11, color: "#64748b" }}>© {brandName}</div>
                 <div style={{ marginTop: 6, letterSpacing: "0.34em", fontSize: 12, fontWeight: 800, color: secondaryColor }}>{brandTagline}</div>
                 <div style={{ marginTop: 10, color: "#64748b", fontSize: 14 }}>{brandSubline}</div>
               </div>
@@ -575,13 +702,18 @@ export default function Page() {
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
               {!isAdmin ? (
                 <>
-                  <input
-                    type="password"
-                    value={adminPassword}
-                    onChange={(e) => setAdminPassword(e.target.value)}
-                    placeholder="Admin password"
-                    style={{ ...adminInputStyle, borderColor: `${primaryColor}33` }}
-                  />
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+  <input
+    type={showAdminPassword ? "text" : "password"}
+    value={adminPassword}
+    onChange={(e) => setAdminPassword(e.target.value)}
+    placeholder="Admin password"
+    style={{ ...adminInputStyle, borderColor: `${primaryColor}33` }}
+  />
+  <button onClick={() => setShowAdminPassword((prev) => !prev)} style={ghostButtonStyle}>
+    {showAdminPassword ? "Hide" : "Show"}
+  </button>
+</div>
                   <button onClick={unlockAdmin} style={outlineButtonStyle(primaryColor)}>Unlock admin</button>
                 </>
               ) : (
@@ -597,6 +729,22 @@ export default function Page() {
         <div style={{ display: "grid", gridTemplateColumns: "minmax(360px, 1.15fr) minmax(320px, 0.85fr)", gap: 24 }}>
           <div style={cardStyle}>
             {isAdmin && (
+              <section style={{ marginBottom: 24 }}>
+                <div style={sectionHeaderStyle(primaryColor)}>Licensing and watermark</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 12, alignItems: "end" }}>
+                  <div>
+                    <label style={labelStyle}>Client license key</label>
+                    <input value={licenseKey} onChange={(e) => setLicenseKey(e.target.value)} placeholder="Enter license key to remove watermark" style={inputStyle} />
+                  </div>
+                  <button onClick={applyLicenseKey} style={actionButtonStyle(primaryColor)}>Apply key</button>
+                </div>
+                <div style={{ marginTop: -4, marginBottom: 16, fontSize: 13, color: watermarkEnabled ? "#92400e" : "#166534" }}>{licenseStatus}</div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
+                  <button onClick={() => { setWatermarkEnabled(true); setLicenseStatus("Watermark ON"); }} style={outlineButtonStyle(primaryColor)}>Force watermark ON</button>
+                  <button onClick={() => { setWatermarkEnabled(false); setLicenseStatus("Watermark OFF (admin override)"); }} style={outlineButtonStyle(primaryColor)}>Admin watermark OFF</button>
+                </div>
+              </section>
+
               <section style={{ marginBottom: 24 }}>
                 <div style={sectionHeaderStyle(primaryColor)}>LeanProcure branding</div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
@@ -718,295 +866,38 @@ export default function Page() {
                 <p style={{ color: "#64748b", fontSize: 14, marginTop: 0 }}>
                   Paste CSV rows for different QR codes. Use either text or email fields. Then export all QR codes as a ZIP of PNG files.
                 </p>
-                <label style={labelStyle}>CSV format</label>
-                <textarea value={batchInput} onChange={(e) => setBatchInput(e.target.value)} style={{ ...inputStyle, minHeight: 220, resize: "vertical", fontFamily: "monospace" }} />
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
-                  <button onClick={handleBatchParse} style={actionButtonStyle(primaryColor)}>Prepare QR list</button>
-                  <button onClick={downloadBatchZip} style={actionButtonStyle(primaryColor)} disabled={batchLoading}>
-                    {batchLoading ? "Building ZIP..." : "Download all QR codes"}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, gap: 10 }}>
+                  <div>
+                    <div style={{ fontWeight: 700, color: primaryColor }}>Build up to 5 different QR codes</div>
+                    <div style={{ color: "#64748b", fontSize: 13, marginTop: 4 }}>Use one line per QR. Choose Text/URL or Email QR for each line.</div>
+                  </div>
+                  <button onClick={addBatchEntry} disabled={batchEntries.length >= 5} style={outlineButtonStyle(primaryColor)}>
+                    Add line
                   </button>
                 </div>
-                <div style={{ color: batchMessage.includes("failed") ? "#b91c1c" : "#475569", fontSize: 14, marginBottom: 16 }}>{batchMessage}</div>
-                <div style={{ background: "#f8fbff", border: `1px solid ${primaryColor}22`, borderRadius: 18, padding: 16 }}>
-                  <div style={{ fontWeight: 800, color: primaryColor, marginBottom: 10 }}>Prepared rows</div>
-                  {validBatchRows.length ? (
-                    <div style={{ display: "grid", gap: 10 }}>
-                      {validBatchRows.map((row, index) => (
-                        <div key={row.id} style={{ border: "1px solid #e2e8f0", borderRadius: 14, padding: 12, background: "white" }}>
-                          <div style={{ fontWeight: 700, color: "#0f172a" }}>{row.fileName || `qr-${index + 1}`}</div>
-                          <div style={{ fontSize: 13, color: "#64748b", wordBreak: "break-all", marginTop: 6 }}>{getBatchQrValue(row)}</div>
+
+                <div style={{ display: "grid", gap: 12, marginBottom: 16 }}>
+                  {batchEntries.map((entry, index) => (
+                    <div key={entry.id} style={{ border: `1px solid ${primaryColor}22`, borderRadius: 16, padding: 14, background: "#f8fbff" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                        <div style={{ fontWeight: 700, color: primaryColor }}>QR line {index + 1}</div>
+                        {batchEntries.length > 1 ? (
+                          <button onClick={() => removeBatchEntry(entry.id)} style={ghostButtonStyle}>Remove</button>
+                        ) : null}
+                      </div>
+
+                      <div style={{ display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: 12 }}>
+                        <div>
+                          <label style={labelStyle}>File name</label>
+                          <input
+                            value={entry.fileName}
+                            onChange={(e) => updateBatchEntry(entry.id, "fileName", e.target.value)}
+                            style={inputStyle}
+                            placeholder={`qr-${index + 1}`}
+                          />
                         </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div style={{ color: "#64748b", fontSize: 14 }}>No multiple QR rows prepared yet.</div>
-                  )}
-                </div>
-              </section>
-            ) : (
-              <section>
-                <div style={sectionHeaderStyle(primaryColor)}>Kanban card generator</div>
-                <p style={{ color: "#64748b", fontSize: 14, marginTop: 0 }}>
-                  Build a printable kanban card like your physical card, using the QR value from the current single QR setup.
-                </p>
-
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-                  <div>
-                    <label style={labelStyle}>Card title</label>
-                    <input value={kanbanTitle} onChange={(e) => setKanbanTitle(e.target.value)} style={inputStyle} />
-                  </div>
-                  <div>
-                    <label style={labelStyle}>Card code</label>
-                    <input value={kanbanCode} onChange={(e) => setKanbanCode(e.target.value)} style={inputStyle} />
-                  </div>
-                </div>
-
-                <label style={labelStyle}>Description</label>
-                <input value={kanbanDescription} onChange={(e) => setKanbanDescription(e.target.value)} style={inputStyle} />
-
-                <label style={labelStyle}>Part number</label>
-                <input value={kanbanPartNo} onChange={(e) => setKanbanPartNo(e.target.value)} style={inputStyle} />
-
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-                  <div>
-                    <label style={labelStyle}>Order at</label>
-                    <input value={kanbanOrderAt} onChange={(e) => setKanbanOrderAt(e.target.value)} style={inputStyle} />
-                  </div>
-                  <div>
-                    <label style={labelStyle}>Order quantity</label>
-                    <input value={kanbanOrderQty} onChange={(e) => setKanbanOrderQty(e.target.value)} style={inputStyle} />
-                  </div>
-                </div>
-
-                <label style={labelStyle}>Supplier</label>
-                <input value={kanbanSupplier} onChange={(e) => setKanbanSupplier(e.target.value)} style={inputStyle} />
-
-                <label style={labelStyle}>Restocking information</label>
-                <input value={kanbanRestockInfo} onChange={(e) => setKanbanRestockInfo(e.target.value)} style={inputStyle} />
-
-                <label style={labelStyle}>Upload product image</label>
-                <input type="file" accept="image/*" onChange={handleKanbanImageUpload} style={{ ...inputStyle, padding: 10 }} />
-
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-                  <button onClick={downloadKanbanCard} style={actionButtonStyle(primaryColor)}>Print / Save Kanban Card</button>
-                </div>
-              </section>
-            )}
-          </div>
-
-          <div style={cardStyle}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, borderBottom: `2px solid ${primaryColor}`, paddingBottom: 14, marginBottom: 18 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                {logoDataUrl ? (
-                  <img src={logoDataUrl} alt="Logo" style={{ width: 44, height: 44, objectFit: "contain", borderRadius: 12 }} />
-                ) : (
-                  <div style={{ width: 44, height: 44, borderRadius: 12, background: `linear-gradient(135deg, ${primaryColor}, ${secondaryColor})`, color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800 }}>LP</div>
-                )}
-                <div>
-                  <div style={{ fontSize: 24, fontWeight: 800, color: primaryColor }}>Preview</div>
-                  <div style={{ color: "#64748b", fontSize: 13 }}>{brandName}</div>
-                </div>
-              </div>
-              <div style={{ fontSize: 12, letterSpacing: "0.3em", fontWeight: 800, color: secondaryColor }}>{brandTagline}</div>
-            </div>
-
-            <div style={{ minHeight: 520, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column" }}>
-              {creatorMode === "single" ? (
-                qrValue.trim() ? (
-                  <>
-                    <div style={{ border: `1px solid ${primaryColor}22`, borderRadius: 24, padding: 16, background: "white" }}>
-                      <canvas ref={canvasRef} style={{ maxWidth: "100%" }} />
-                    </div>
-                    <div style={{ width: "100%", marginTop: 22, background: "#f8fbff", borderRadius: 18, padding: 16 }}>
-                      <div style={{ fontWeight: 800, color: primaryColor, marginBottom: 8 }}>Encoded QR content</div>
-                      <div style={{ color: "#475569", fontSize: 14, wordBreak: "break-all", textAlign: "center" }}>{qrValue}</div>
-                    </div>
-                  </>
-                ) : (
-                  <div style={{ color: "#64748b" }}>Enter content to generate your LeanProcure QR code.</div>
-                )
-              ) : creatorMode === "batch" ? (
-                <div style={{ width: "100%", background: "#f8fbff", borderRadius: 18, padding: 18 }}>
-                  <div style={{ fontWeight: 800, color: primaryColor, marginBottom: 10 }}>Multiple QR Codes</div>
-                  <div style={{ color: "#475569", fontSize: 14, lineHeight: 1.6 }}>
-                    Prepare a CSV list on the left, then download a ZIP containing different QR codes for each row.
-                  </div>
-                  <div style={{ marginTop: 14, fontSize: 14, color: "#64748b" }}>
-                    Ready rows: {validBatchRows.length}
-                  </div>
-                </div>
-              ) : (
-                <div style={{ width: "100%", background: "#f8fbff", borderRadius: 18, padding: 18 }}>
-                  <div style={{ fontWeight: 800, color: primaryColor, marginBottom: 10 }}>Kanban card preview</div>
-                  <div style={{ border: "2px solid #4b5563", background: "white" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#b64c4c", color: "white", padding: "10px 14px", fontWeight: 800 }}>
-                      <div>{kanbanTitle}</div>
-                      <div>{kanbanCode}</div>
-                    </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr" }}>
-                      <div style={{ borderRight: "1px solid #555", borderBottom: "1px solid #555", padding: 12, minHeight: 220, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        {qrValue.trim() ? <canvas ref={canvasRef} style={{ maxWidth: "100%" }} /> : <div style={{ color: "#64748b" }}>Create a single QR first</div>}
-                      </div>
-                      <div style={{ borderBottom: "1px solid #555" }}>
-                        <div style={kanbanHeadStyle}>DESCRIPTION</div>
-                        <div style={kanbanBodyStyle}>{kanbanDescription}<br /><br />(Part No. {kanbanPartNo})</div>
-                        <div style={kanbanHeadStyle}>ORDER AT</div>
-                        <div style={kanbanBodyStyle}>{kanbanOrderAt}<br /><span style={kanbanNoteStyle}>SCAN QR CODE AT THIS POINT</span></div>
-                        <div style={kanbanHeadStyle}>ORDER QUANTITY</div>
-                        <div style={kanbanBodyStyle}>{kanbanOrderQty}</div>
-                        <div style={kanbanHeadStyle}>SUPPLIERS</div>
-                        <div style={kanbanBodyStyle}>{kanbanSupplier}</div>
-                      </div>
-                    </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr" }}>
-                      <div style={{ minHeight: 160, borderRight: "1px solid #555", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-                        {kanbanImageUrl ? <img src={kanbanImageUrl} alt="Product" style={{ maxWidth: 180, maxHeight: 140, objectFit: "contain" }} /> : null}
-                      </div>
-                      <div></div>
-                    </div>
-                    <div style={kanbanHeadStyle}>RESTOCKING INFORMATION</div>
-                    <div style={{ padding: 14, fontSize: 16 }}>{kanbanRestockInfo}</div>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function tabButtonStyle(active, color) {
-  return {
-    padding: "10px 16px",
-    borderRadius: 14,
-    border: active ? `1px solid ${color}` : "1px solid #cbd5e1",
-    background: active ? color : "white",
-    color: active ? "white" : "#0f172a",
-    fontWeight: 700,
-    cursor: "pointer",
-  };
-}
-
-function outlineButtonStyle(color) {
-  return {
-    padding: "10px 14px",
-    borderRadius: 14,
-    border: `1px solid ${color}33`,
-    background: "white",
-    color: color,
-    fontWeight: 700,
-    cursor: "pointer",
-  };
-}
-
-function pillButtonStyle(active, primary, secondary) {
-  return {
-    padding: "10px 14px",
-    borderRadius: 999,
-    border: active ? `1px solid ${secondary}` : "1px solid #d7e0ea",
-    background: active ? `${secondary}18` : "white",
-    color: active ? primary : "#334155",
-    fontWeight: 700,
-    cursor: "pointer",
-  };
-}
-
-function actionButtonStyle(color) {
-  return {
-    padding: "10px 16px",
-    borderRadius: 14,
-    border: `1px solid ${color}`,
-    background: color,
-    color: "white",
-    fontWeight: 700,
-    cursor: "pointer",
-  };
-}
-
-function sectionHeaderStyle(color) {
-  return {
-    fontSize: 18,
-    fontWeight: 800,
-    color,
-    marginBottom: 14,
-  };
-}
-
-const cardStyle = {
-  background: "white",
-  borderRadius: 24,
-  padding: 24,
-  boxShadow: "0 16px 40px rgba(15,23,42,0.08)",
-};
-
-const ghostButtonStyle = {
-  padding: "10px 16px",
-  borderRadius: 14,
-  border: "1px solid #cbd5e1",
-  background: "white",
-  color: "#0f172a",
-  fontWeight: 700,
-  cursor: "pointer",
-};
-
-const smallButtonStyle = {
-  padding: "10px 12px",
-  borderRadius: 12,
-  border: "1px solid #cbd5e1",
-  background: "white",
-  color: "#0f172a",
-  fontWeight: 700,
-  cursor: "pointer",
-  height: 46,
-};
-
-const inputStyle = {
-  width: "100%",
-  padding: "12px 14px",
-  borderRadius: 14,
-  border: "1px solid #cbd5e1",
-  marginBottom: 16,
-  fontSize: 14,
-  boxSizing: "border-box",
-};
-
-const adminInputStyle = {
-  padding: "10px 12px",
-  borderRadius: 14,
-  border: "1px solid #cbd5e1",
-  fontSize: 14,
-  minWidth: 180,
-};
-
-const labelStyle = {
-  display: "block",
-  marginBottom: 8,
-  fontWeight: 700,
-  color: "#0f172a",
-};
-
-const kanbanHeadStyle = {
-  background: "#b64c4c",
-  color: "white",
-  fontWeight: 700,
-  padding: "8px 12px",
-  fontSize: 18,
-};
-
-const kanbanBodyStyle = {
-  padding: "12px",
-  fontSize: 18,
-  lineHeight: 1.4,
-};
-
-const kanbanNoteStyle = {
-  display: "inline-block",
-  marginTop: 8,
-  background: "#e7d66f",
-  color: "#222",
-  fontSize: 12,
-  fontWeight: 700,
-  padding: "4px 8px",
-};
+                        <div>
+                          <label style={labelStyle}>QR type</label>
+                          <select
+                            value={entry.qrType}
+                            onChange={(e) => updateBatchEntry(entry.id, "qrT
